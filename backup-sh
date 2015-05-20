@@ -14,42 +14,6 @@
 #:	   : 
 #############################
 
-restoreMenu()
-{
-	while $ERROR
-	do
-		if [ $( ls $DESTDIR|wc -l ) -gt 1 ]
-		then
-			printf "From which kernel version would you like\ 
-				to restore from?:"
-	
-			VERSION_LIST=$( ls $DESTDIR| cat  -b )
-			for $VERSION in $VERSION_LIST
-			do
-				printf "%s\n" $VERSION
-			done
-			
-			printf ":"	
-			read VERSION_SELECTED
-	
-			if [ $( echo $VERSION_SELECTED| grep -q [^0-9] ) ]
-			then
-				printf "Enter a number from the list\n\n"
-				ERROR=true
-			elif [ $VERSION_SELECTED -gt $( ls $DESTDIR|wc -l ) ] || [ $VERSION_SELECTED -lt 0 ]
-				printf "Invalid option\n\n"
-				ERROR=true
-			else
-				ERROR=false
-			fi
-		else
-			VERSION_SELECTED=$( ls $DESTDIR )
-			ERROR=false
-		fi 
-	done
-	return $VERSION_SELECTED
-}
-
 #automated at the root level by default
 if [ $EUID -ne 0 ]
 then
@@ -134,51 +98,6 @@ case $opt in
 
 		umount $DESTDIR
 		exit 0
-	;;
-	# Restore backup
-	r)
-		TAR_OPTIONS="--listed-incremental=/dev/null"
-		BACKUP_VERSION=restoreMenu
-
-		if [[ $OPTARG != ""  ]]
-		then
-			echo $OPTARG| grep -Eo [0-9]{4}\(-[0-9]{2}\){2} &>> /dev/null
-			if [ ! $? ]
-			then
-				printf "Please enter the restore date as yyyy-mm-dd\n"
-				exit 1
-			else
-				RESTOREDATE=$OPTARG
-			fi	
-
-			if [ ! -d $DESTDIR/backup_$RESTOREDATE ]
-			then
-				printf "No archive exists for the date of $RESTOREDATE\n"
-				exit 1
-			else
-				RESTOREPATH=$DESTDIR/backup_$RESTOREDATE
-			fi
-		else
-			RESTOREDATE=$( date -I )
-		fi
-			
-		# Retrieve particular directories to restore
-		OPTSTRING=d:f:
-		while getopts $OPTSTRING opt
-		do
-			case $opt in
-				# Retrieve a directory
-				d)	
-					tar --list $( ls $RESTOREPATH| grep  ) $OPTARG
-				;;
-				# Retrieve a file
-				f)
-					$OPTARG
-				;;
-			esac
-		done
-
-
 	;;
 	*)
 		echo invalid option
