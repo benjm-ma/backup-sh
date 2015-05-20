@@ -1,6 +1,6 @@
 #!/bin/bash
 #############################
-#: Program : bkup
+#: Program : backup
 #: Author  : Benjamin Ahola
 #: Date    : 2015-05-16
 #: Desc    : Simple backup script using tar The backup plan is a full backup 
@@ -21,13 +21,14 @@ then
 	exit 1
 fi
 
-DATE="$( date -I )"
-DISTROVERSION=$( uname --kernel-version|\
+BACKUPNAME=$( uname --kernel-version|\
 		cut --delimiter=" " --fields=3,4|\
 		tr ' ' '_' )
-DESTDIR="bkdup"
-SRCDIR="backmeup"
-BACKUPNAME="backup_${DATE%-[0-9]*}"
+DESTDIR=bkdup
+SRCDIR=backmeup
+
+BACKUPPATH=$DESTDIR/$BACKUPNAME
+METAFILE=$BACKUPPATH/$BACKUPNAME.snar
 
 # The TAPE environment variable is used as the file archive name when none is specified
 
@@ -40,7 +41,7 @@ TAR_OPTIONS="--create --gzip --preserve-permissions --one-file-system --exclude=
 
 # --verify attempts to verify the archive after writing it
 
-OPTSTRING=ifr:
+OPTSTRING=if
 getopts $OPTSTRING opt 
 
 #Check to see if the destination is mounted
@@ -58,16 +59,13 @@ getopts $OPTSTRING opt
 case $opt in
 	# Create level-0 dump
 	f)
-		BACKUPPATH="$DESTDIR/$DISTROVERSION"
-		METAFILENAME="$BACKUPPATH/$BACKUPNAME.snar"
-
 		if [ ! -d "$BACKUPPATH" ]
 		then
 			mkdir -p "$BACKUPPATH"
 		fi
 
-		tar "$BACKUPPATH/$BACKUPNAME.tar.gz"\
-			 --listed-incremental="$METAFILENAME"\
+		tar $TAR_OPTIONS"$BACKUPPATH/$BACKUPNAME.tar.gz"\
+			 --listed-incremental="$METAFILE"\
 			 "$SRCDIR"
 
 		umount $DESTDIR
@@ -76,23 +74,21 @@ case $opt in
 	# Create level-n dump
 	i)
 		
-		PWBACKUPNAME=backup_$( ls $DESTDIR| cut -d_ -f2| sort -r| head -1 )
-		PWBACKUPPATH=$DESTDIR/$PWBACKUPNAME
-		METAFILENAME=$PWBACKUPNAME
-		BACKUPNAME=INC_${DATE#[0-9]*-}
+		DATE=$( date -I )
+		INC_BACKUPNAME=INC_${DATE#[0-9]*-}
 
-		if [ -f "$PWBACKUPPATH/$BACKUPNAME.tar.gz" ]
+		if [ -f "$BACKUPPATH/$INC_BACKUPNAME.1.tar.gz" ]
 		then
-			LEVELNUM=$( ls $PWBACKUPPATH| grep $BACKUPNAME| wc -l )
+			LEVELNUM=$( ls $BACKUPPATH| grep "$INC_BACKUPNAME\.*"| echo $(($(wc -l)+ 1)) )
 			# Create level-n dump
-			tar "$PWBACKUPPATH/$BACKUPNAME_$LEVELNUM"\
-				--listed-incremental="$PWBACKUPPATH/$METAFILENAME.snar"\
+			tar $TAR_OPTIONS"$BACKUPPATH/$INC_BACKUPNAME.$LEVELNUM.tar.gz"\
+				--listed-incremental=$METAFILE\
 				--level=$LEVELNUM\
 				"$SRCDIR"
 		else
 			# Create level-1 dump
-			tar "$PWBACKUPPATH/$BACKUPNAME.tar.gz"\
-				 --listed-incemental="$PWBACKUPPATH/$METAFILENAME.snar"\
+			tar $TAR_OPTIONS"$BACKUPPATH/$INC_BACKUPNAME.1.tar.gz"\
+				 --listed-incremental="$METAFILE"\
 				"$SRCDIR"
 		fi
 
