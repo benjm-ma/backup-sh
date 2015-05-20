@@ -111,7 +111,6 @@ case $opt in
 	;;
 	# Create level-n dump
 	i)
-		
 		PWBACKUPNAME=backup_$( ls $DESTDIR| cut -d_ -f2| sort -r| head -1 )
 		PWBACKUPPATH=$DESTDIR/$PWBACKUPNAME
 		METAFILENAME=$PWBACKUPNAME
