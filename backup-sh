@@ -1,0 +1,188 @@
+#!/bin/bash
+#############################
+#: Program : bkup
+#: Author  : Benjamin Ahola
+#: Date    : 2015-05-16
+#: Desc    : Simple backup script using tar The backup plan is a full backup 
+#:	   : once a week and an incremental backup every day. This 
+#:	   : command can be run independantly (though it is intended to be 
+#:	   : automated via cron).
+#: Options :
+#:   -f    : 
+#:	   : 
+#:   -i    : 
+#:	   : 
+#############################
+
+restoreMenu()
+{
+	while $ERROR
+	do
+		if [ $( ls $DESTDIR|wc -l ) -gt 1 ]
+		then
+			printf "From which kernel version would you like\ 
+				to restore from?:"
+	
+			VERSION_LIST=$( ls $DESTDIR| cat  -b )
+			for $VERSION in $VERSION_LIST
+			do
+				printf "%s\n" $VERSION
+			done
+			
+			printf ":"	
+			read VERSION_SELECTED
+	
+			if [ $( echo $VERSION_SELECTED| grep -q [^0-9] ) ]
+			then
+				printf "Enter a number from the list\n\n"
+				ERROR=true
+			elif [ $VERSION_SELECTED -gt $( ls $DESTDIR|wc -l ) ] || [ $VERSION_SELECTED -lt 0 ]
+				printf "Invalid option\n\n"
+				ERROR=true
+			else
+				ERROR=false
+			fi
+		else
+			VERSION_SELECTED=$( ls $DESTDIR )
+			ERROR=false
+		fi 
+	done
+	return $VERSION_SELECTED
+}
+
+#automated at the root level by default
+if [ $EUID -ne 0 ]
+then
+	printf "This script requires super user privileges\n"
+	exit 1
+fi
+
+DATE="$( date -I )"
+DISTROVERSION=$( uname --kernel-version|\
+		cut --delimiter=" " --fields=3,4|\
+		tr ' ' '_' )
+DESTDIR="bkdup"
+SRCDIR="backmeup"
+BACKUPNAME="backup_${DATE%-[0-9]*}"
+
+# The TAPE environment variable is used as the file archive name when none is specified
+
+# TAR_OPTIONS specifies default options to be placed in front of any explicit options
+TAR_OPTIONS="--create --gzip --preserve-permissions --one-file-system --exclude='/tmp' --exclude='.cache' --file="
+
+# a return code of 1 when  tar is invoked with the -d option means some files differ
+# if the --append, --update, --create options were used, it means that some files were changed while being archioved 
+ # and so the resulting archive does not contain the exact copy of the file set
+
+# --verify attempts to verify the archive after writing it
+
+OPTSTRING=ifr:
+getopts $OPTSTRING opt 
+
+#Check to see if the destination is mounted
+#mount| grep "$DESDIR" &>>/dev/null
+#if [ ! $? -eq 0 ]
+#then
+#	mount $DESTDIR
+#	if [ $? -eq 1 ]
+#	then
+#		printf "Failed to mount $DESTDIR.\n"
+#		exit 1
+#	fi
+#fi
+
+case $opt in
+	# Create level-0 dump
+	f)
+		BACKUPPATH="$DESTDIR/$DISTROVERSION"
+		METAFILENAME="$BACKUPPATH/$BACKUPNAME.snar"
+
+		if [ ! -d "$BACKUPPATH" ]
+		then
+			mkdir -p "$BACKUPPATH"
+		fi
+
+		tar "$BACKUPPATH/$BACKUPNAME.tar.gz"\
+			 --listed-incremental="$METAFILENAME"\
+			 "$SRCDIR"
+
+		umount $DESTDIR
+		exit 0
+	;;
+	# Create level-n dump
+	i)
+		
+		PWBACKUPNAME=backup_$( ls $DESTDIR| cut -d_ -f2| sort -r| head -1 )
+		PWBACKUPPATH=$DESTDIR/$PWBACKUPNAME
+		METAFILENAME=$PWBACKUPNAME
+		BACKUPNAME=INC_${DATE#[0-9]*-}
+
+		if [ -f "$PWBACKUPPATH/$BACKUPNAME.tar.gz" ]
+		then
+			LEVELNUM=$( ls $PWBACKUPPATH| grep $BACKUPNAME| wc -l )
+			# Create level-n dump
+			tar "$PWBACKUPPATH/$BACKUPNAME_$LEVELNUM"\
+				--listed-incremental="$PWBACKUPPATH/$METAFILENAME.snar"\
+				--level=$LEVELNUM\
+				"$SRCDIR"
+		else
+			# Create level-1 dump
+			tar "$PWBACKUPPATH/$BACKUPNAME.tar.gz"\
+				 --listed-incemental="$PWBACKUPPATH/$METAFILENAME.snar"\
+				"$SRCDIR"
+		fi
+
+		umount $DESTDIR
+		exit 0
+	;;
+	# Restore backup
+	r)
+		TAR_OPTIONS="--listed-incremental=/dev/null"
+		BACKUP_VERSION=restoreMenu
+
+		if [[ $OPTARG != ""  ]]
+		then
+			echo $OPTARG| grep -Eo [0-9]{4}\(-[0-9]{2}\){2} &>> /dev/null
+			if [ ! $? ]
+			then
+				printf "Please enter the restore date as yyyy-mm-dd\n"
+				exit 1
+			else
+				RESTOREDATE=$OPTARG
+			fi	
+
+			if [ ! -d $DESTDIR/backup_$RESTOREDATE ]
+			then
+				printf "No archive exists for the date of $RESTOREDATE\n"
+				exit 1
+			else
+				RESTOREPATH=$DESTDIR/backup_$RESTOREDATE
+			fi
+		else
+			RESTOREDATE=$( date -I )
+		fi
+			
+		# Retrieve particular directories to restore
+		OPTSTRING=d:f:
+		while getopts $OPTSTRING opt
+		do
+			case $opt in
+				# Retrieve a directory
+				d)	
+					tar --list $( ls $RESTOREPATH| grep  ) $OPTARG
+				;;
+				# Retrieve a file
+				f)
+					$OPTARG
+				;;
+			esac
+		done
+
+
+	;;
+	*)
+		echo invalid option
+		exit 1
+esac
+
+
