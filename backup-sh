@@ -5,56 +5,99 @@
 #: Date    : 2015-05-16
 #: Desc    : Simple backup script using tar The backup plan is a full backup 
 #:	   : once a week and an incremental backup every day. This 
-#:	   : command can be run independantly (though it is intended to be 
-#:	   : automated via cron).
 #: Options :
-#:   -f    : 
+#:   -f    : Creates a level-0 backup
 #:	   : 
-#:   -i    : 
+#:   -i    : Creates a a level-n backup where if there exists an incremental
+#:	   : backup of the same name ( a second backup was created for a single
+#:	   : day ) then the level is incremented to the next.
 #:	   : 
 #############################
 
+
+#############################
+# Super User Authenticator
+#  Determines if the super
+#  user is running this script
+# Params:
+#  $1: Error Message explaining
+#	why authentication 
+#	is needed
+############################
+suAuth()
+{
+	if [ $EUID -ne 0 ]
+	then
+		printf "%s\n" $1 1>&2
+		exit 1
+	fi
+}
+
 #automated at the root level by default
-if [ $EUID -ne 0 ]
-then
-	printf "This script requires super user privileges\n"
-	exit 1
-fi
 
 BACKUPNAME=$( uname --kernel-version|\
 		cut --delimiter=" " --fields=3,4|\
 		tr ' ' '_' )
-DESTDIR=bkdup
+DESTVOL=bkdup
 SRCDIR=backmeup
 
-BACKUPPATH=$DESTDIR/$BACKUPNAME
+BACKUPPATH=$DESTVOL/$BACKUPNAME
 METAFILE=$BACKUPPATH/$BACKUPNAME.snar
 
-# The TAPE environment variable is used as the file archive name when none is specified
-
-# TAR_OPTIONS specifies default options to be placed in front of any explicit options
-TAR_OPTIONS="--create --gzip --preserve-permissions --one-file-system --exclude='/tmp' --exclude='.cache' --file="
-
-# a return code of 1 when  tar is invoked with the -d option means some files differ
-# if the --append, --update, --create options were used, it means that some files were changed while being archioved 
- # and so the resulting archive does not contain the exact copy of the file set
-
-# --verify attempts to verify the archive after writing it
+TAR_OPTIONS="--create --gzip --preserve-permissions\
+		 --one-file-system --exclude='/tmp'\
+		 --exclude='.cache' --verify --file="
 
 OPTSTRING=if
 getopts $OPTSTRING opt 
 
-#Check to see if the destination is mounted
-#mount| grep "$DESDIR" &>>/dev/null
-#if [ ! $? -eq 0 ]
-#then
-#	mount $DESTDIR
-#	if [ $? -eq 1 ]
-#	then
-#		printf "Failed to mount $DESTDIR.\n"
-#		exit 1
-#	fi
-#fi
+# Check to see if the destination is mounted
+mount| grep "$DESTVOL" &>>/dev/null
+if [ ! $? -eq 0 ]
+then
+
+	# Check config
+	if [[ $UUID != "" ]]
+	then
+		# Are we super user? If not exit here
+		suAuth "A default volume UUID was specified\
+			however super user privlieges are required\
+			to mount it\n"
+		if [ -d $DESTVOL ]
+		then
+			mount --uuid $UUID $DESTVOL
+		else
+			mount --uuid $UUID /mnt
+			if [ $? -eq 32 ]
+				printf "Failed to mount backup volume\n" 1>&2
+				exit 1
+			fi
+	else
+	# Check fstab
+		MOUNT_PARAMS="$( cat /etc/fstab| grep "$DESTVOL" 2>>/dev/null )"
+	
+		if [[ $MOUNT_PARAMS != "" ]] 
+		then
+			if [[ $( echo $MOUNT_PARAMS| grep "user" &>>/dev/null ) ]]
+			then
+				mount $DESTVOL
+			else
+				# Are we super user? If not exit here
+				suAuth "No 'user' mount option specified\
+					within /etc/fstab for $DESTVOL.\
+					super user privlieges are required\
+					to mount it."
+				mount $DESTVOL
+			fi
+		fi 
+	
+		if [ $? -eq 1 ]
+		then
+			printf "Failed to mount $DESTVOL.\n" 1>&2
+			exit 1
+		fi
+	fi
+fi
 
 case $opt in
 	# Create level-0 dump
@@ -68,7 +111,7 @@ case $opt in
 			 --listed-incremental="$METAFILE"\
 			 "$SRCDIR"
 
-		umount $DESTDIR
+		umount $DESTVOL
 		exit 0
 	;;
 	# Create level-n dump
@@ -92,7 +135,7 @@ case $opt in
 				"$SRCDIR"
 		fi
 
-		umount $DESTDIR
+		umount $DESTVOL
 		exit 0
 	;;
 	*)
