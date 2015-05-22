@@ -4,143 +4,209 @@
 #: Author  : Benjamin Ahola
 #: Date    : 2015-05-16
 #: Desc    : Simple backup script using tar The backup plan is a full backup 
-#:	   : once a week and an incremental backup every day. This 
+#:     	   : once a week and an incremental backup every day. This 
 #: Options :
 #:   -f    : Creates a level-0 backup
-#:	   : 
+#:     	   : 
 #:   -i    : Creates a a level-n backup where if there exists an incremental
 #:	   : backup of the same name ( a second backup was created for a single
 #:	   : day ) then the level is incremented to the next.
 #:	   : 
 #############################
 
+# TODO: Create function displaying usage
 
 #############################
 # Super User Authenticator
 #  Determines if the super
 #  user is running this script
-# Params:
+#-Params---------------------
 #  $1: Error Message explaining
-#	why authentication 
-#	is needed
+#  why authentication 
+#  is needed
 ############################
-suAuth()
-{
-	if [ $EUID -ne 0 ]
-	then
-		printf "%s\n" $1 1>&2
-		exit 1
-	fi
+rootAuth(){
+ 
+  declare Msg="$1"
+
+  if [[ ! $EUID ]]; then
+    error "p" "$Msg"
+  fi
+
 }
 
-#automated at the root level by default
+#############################
+# error - 
+#  Prints error or warning 
+#  messages to stderr.
+#
+#-Params---------------------
+# $1: The type of error
+# $2: The message related to 
+#   :  the error.
+#############################
+error(){
 
-BACKUPNAME=$( uname --kernel-version|\
-		cut --delimiter=" " --fields=3,4|\
-		tr ' ' '_' )
-DESTVOL=bkdup
-SRCDIR=backmeup
+  declare errorType="$1" errorMsg="$2"
 
-BACKUPPATH=$DESTVOL/$BACKUPNAME
-METAFILE=$BACKUPPATH/$BACKUPNAME.snar
+  case "$1" in
+    # Error related to permissions
+    p)
+      printf "Insufficent privlieges: %s\n" "$errorMsg" >&2
+      exit 2
+    ;;
+    # General error message
+    e)
+      printf "Error: %s\n" "$errorMsg" >&2
+      exit 1
+    ;;
+    # General warning
+    w)
+      printf "Warning: %s\n" "$errorMsg" >&2
+    ;;
+  esac
+}
 
-TAR_OPTIONS="--create --gzip --preserve-permissions\
-		 --one-file-system --exclude='/tmp'\
-		 --exclude='.cache' --verify --file="
+#############################
+#
+#
+#-Params---------------------
+# $1:
+# $2:
+#############################
+mntVol(){
 
-OPTSTRING=if
-getopts $OPTSTRING opt 
+  declare bkupVol="$1" uuid="$2"
 
-# Check to see if the destination is mounted
-mount| grep "$DESTVOL" &>>/dev/null
-if [ ! $? -eq 0 ]
-then
+  # Check disk UUID first
+  if [[ "$uuid" != "" ]]; then
 
-	# Check config
-	if [[ $UUID != "" ]]
-	then
-		# Are we super user? If not exit here
-		suAuth "A default volume UUID was specified\
-			however super user privlieges are required\
-			to mount it\n"
-		if [ -d $DESTVOL ]
-		then
-			mount --uuid $UUID $DESTVOL
-		else
-			mount --uuid $UUID /mnt
-			if [ $? -eq 32 ]
-				printf "Failed to mount backup volume\n" 1>&2
-				exit 1
-			fi
-	else
-	# Check fstab
-		MOUNT_PARAMS="$( cat /etc/fstab| grep "$DESTVOL" 2>>/dev/null )"
-	
-		if [[ $MOUNT_PARAMS != "" ]] 
-		then
-			if [[ $( echo $MOUNT_PARAMS| grep "user" &>>/dev/null ) ]]
-			then
-				mount $DESTVOL
-			else
-				# Are we super user? If not exit here
-				suAuth "No 'user' mount option specified\
-					within /etc/fstab for $DESTVOL.\
-					super user privlieges are required\
-					to mount it."
-				mount $DESTVOL
-			fi
-		fi 
-	
-		if [ $? -eq 1 ]
-		then
-			printf "Failed to mount $DESTVOL.\n" 1>&2
-			exit 1
-		fi
-	fi
-fi
+    # Are we super user? If not exit here
+    # TODO: I'm thinking the fstab should be used as a fallback, this should be delivered as a warning maybe?
+    rootAuth "A default volume uuid was specified, "\
+     "however super user privlieges are required "\
+     "to mount it"
 
-case $opt in
-	# Create level-0 dump
-	f)
-		if [ ! -d "$BACKUPPATH" ]
-		then
-			mkdir -p "$BACKUPPATH"
-		fi
+    if [[ -d "$target" ]]; then
+      mount --uuid $uuid $target
+    elif [[ "$( mount --uuid $uuid /mnt &>>/dev/null )" -eq 32 ]]; then
+	error "e" "Failed to mount:\n$uuid"
+    fi
 
-		tar $TAR_OPTIONS"$BACKUPPATH/$BACKUPNAME.tar.gz"\
-			 --listed-incremental="$METAFILE"\
-			 "$SRCDIR"
+  else
 
-		umount $DESTVOL
-		exit 0
-	;;
-	# Create level-n dump
-	i)
-		
-		DATE=$( date -I )
-		INC_BACKUPNAME=INC_${DATE#[0-9]*-}
+    if mount| grep -q "$target"; then
 
-		if [ -f "$BACKUPPATH/$INC_BACKUPNAME.1.tar.gz" ]
-		then
-			LEVELNUM=$( ls $BACKUPPATH| grep "$INC_BACKUPNAME\.*"| echo $(($(wc -l)+ 1)) )
-			# Create level-n dump
-			tar $TAR_OPTIONS"$BACKUPPATH/$INC_BACKUPNAME.$LEVELNUM.tar.gz"\
-				--listed-incremental=$METAFILE\
-				--level=$LEVELNUM\
-				"$SRCDIR"
-		else
-			# Create level-1 dump
-			tar $TAR_OPTIONS"$BACKUPPATH/$INC_BACKUPNAME.1.tar.gz"\
-				 --listed-incremental="$METAFILE"\
-				"$SRCDIR"
-		fi
+      mountParams="$( cat /etc/fstab| grep "$target" 2>>/dev/null )"
+  
+      if [[ $mountParams != "" ]] && echo $mountParams| grep -q "user"; then
+          mount $target
+      else
+        # Are we super user? If not exit here
+        rootAuth "No 'user' mount option specified "\
+          "within /etc/fstab for $target. "\
+          "Super user privlieges are required "\
+          "to mount it."
+        mount $target
+      fi
+    fi 
+  fi
+}
 
-		umount $DESTVOL
-		exit 0
-	;;
-	*)
-		echo invalid option
-		exit 1
-esac
+#############################
+# incDump - The tar command
+#  to be executed to store
+#  user dumpage as specified 
+#
+#-Params---------------------
+# $1: The options which tar 
+#  	will use.
+# $2: The path to where the
+#	srcPath contents will
+#	be dumped to.
+# $3: The path which is to be
+#	dumped
+# $4: The meta file for the 
+# 	the incremental dumps
+#############################
+incDump(){
+  declare opts="$1" targetPath="$2" srcPath="$3" metaFile="$4"
 
+  tar "$opts$targetPath"\
+     --listed-incremental="$metaFile"\
+     "$srcPath"
 
+}
+
+#############################
+#
+#
+#-Params---------------------
+#
+#############################
+main(){
+  
+  # User defined variables
+  local backupName=$( uname --kernel-version|\
+      cut --delimiter=" " --fields=3,4|\
+      tr ' ' '_' )
+  local target="bkdup"
+  local srcDir="backmeup"
+  local suffix="tar.gz"
+
+  # Optionally specify uuid to mount disk
+  local uuid=""
+
+  local backupPath=$target/$backupName
+  local metaFile=$backupPath/$backupName.snar
+
+  
+  local tarOpts="--create --gzip --preserve-permissions\
+       --one-file-system --exclude='/tmp'\
+       --exclude='.cache' --verify --file="
+  
+  # Mount necessary volumes to make backup
+  mntVol "$backupPath" "$uuid"
+
+  OPTSTRING="if"
+  getopts $OPTSTRING opt 
+
+  case $opt in
+    # Create level-0 dump
+    f)
+      if [ ! -d "$backupPath" ]; then
+        mkdir -p "$backupPath"
+      fi  
+
+      incBackup "$tarOpts" "$backupPath/$backupName$suffix" "$srcDir" "$metaFile"
+  
+
+    ;;
+    # Create level-n dump
+    i)
+      
+      incBackupName="inc_${$(date -1)#[0-9]*-}"
+  
+      if [[ -f $backupPath/$incBackupName.?*.$suffix ]]; then
+        lvlNum=$( ls $backupPath| grep "$incBackupName\.*"| echo $(($(wc -l)+ 1)) )
+
+        # Create level-n dump
+	incBackup "$tarOpts" "$backupPath/$incBackupName.$lvlNum.$suffix" "$srcDir" "$metaFile"
+
+      else
+
+        # Create level-1 dump
+	incBackup "$tarOpts" "$backupPath/$incBackupName.1.$suffix" "$srcDir" "$metaFile"
+
+      fi
+    ;;
+    *)
+      error "e" "Invalid option, refer to usage"
+    ;;
+  esac
+
+  umount $target
+  exit 0
+}
+
+main
