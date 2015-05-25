@@ -119,22 +119,56 @@ mntVol(){
 #  user dumpage as specified 
 #
 #-Params---------------------
-# $1: The options which tar 
-#  	will use.
-# $2: The path to where the
-#	srcPath contents will
-#	be dumped to.
-# $3: The path which is to be
-#	dumped
-# $4: The meta file for the 
-# 	the incremental dumps
+# $1: The path to where the srcPath 
+#       contents will be dumped to.
+# $2: The path which is to be dumped
+# $3: The meta file for the the incremental
+#       dumps
 #############################
 incDump(){
-  declare opts="$1" targetPath="$2" srcPath="$3" metaFile="$4"
+  declare targetPath="$1" srcPath="$2" metaFile="$3"
 
-  tar "$opts$targetPath"\
-     --listed-incremental="$metaFile"\
-     "$srcPath"
+  tar --create --gzip --preserve-permissions\
+      --one-file-system --exclude=/tmp\
+      --listed-incremental="$metaFile"\
+      --exclude=.cache --file="$targetPath"\
+      "$srcPath"
+
+}
+
+#############################
+#
+#
+#-Params---------------------
+#
+#############################
+recentInc(){
+
+  declare path="$1"
+
+  {
+   read # throw out 'total' line of output
+   read pwInc
+  }<<< "$( ls -lGgot --hide="*.snar" --time-style="iso"\
+          "$path")"
+
+  # Remove date recorded on fs
+  read jnk jnk jnk date jnk <<< "$pwInc"
+
+  
+  local pwInc="${pwInc##?* }"
+
+  #Check file integrety
+        #Grab backup name only
+  case "$pwInc" in
+    ?*"$date"?*) ;;
+    *)
+      error "w" "The date listed and the date recorded"\
+        "do not match up. This file may have been modified"
+    ;;
+  esac
+
+  return $pwInc
 
 }
 
@@ -146,60 +180,63 @@ incDump(){
 #############################
 main(){
   
-  # User defined variables
-  local backupName=$( uname --kernel-version|\
+  # TODO: Add config file parsing function
+
+  # Set default values where necessary
+  local ${backupName:="$( uname --kernel-version|\
       cut --delimiter=" " --fields=3,4|\
-      tr ' ' '_' )
-  local target="bkdup"
-  local srcDir="backmeup"
-  local suffix="tar.gz"
+      tr ' ' '_' )"}
+  local ${target:="targetDir"}
+  local ${srcDir:="sourceDir"}
+  local ${suffix:=".bak"}
 
   # Optionally specify uuid to mount disk
+  # *This currently overrides any relavent 
+  # fstab entries for the backup
   local uuid=""
 
-  local backupPath=$target/$backupName
-  local metaFile=$backupPath/$backupName.snar
+  local date="$( date -I )"
+  local d_yyyy="${date%%-[0-9]*}"
+  local d_mmdd="${date#[0-9]*-}"
 
-  
-  local tarOpts="--create --gzip --preserve-permissions\
-       --one-file-system --exclude='/tmp'\
-       --exclude='.cache' --verify --file="
-  
+  local backupPath="$target/${backupName%%-?*}/$d_yyyy"
+  local metaFile="$backupPath/$backupName.snar"
+
   # Mount necessary volumes to make backup
-  mntVol "$backupPath" "$uuid"
+  # mntVol "$backupPath" "$uuid"
 
-  OPTSTRING="if"
-  getopts $OPTSTRING opt 
+  optString=if
+  getopts $optString opt 
 
   case $opt in
+
     # Create level-0 dump
-    f)
+    "f")
       if [ ! -d "$backupPath" ]; then
         mkdir -p "$backupPath"
       fi  
 
-      incBackup "$tarOpts" "$backupPath/$backupName$suffix" "$srcDir" "$metaFile"
-  
-
+      incDump  "$backupPath/$backupName.$suffix" "$srcDir" "$metaFile"
     ;;
+
     # Create level-n dump
-    i)
-      
-      incBackupName="inc_${$(date -1)#[0-9]*-}"
+    "i")
+      incBackupName="inc_$d_mmdd"
   
-      if [[ -f $backupPath/$incBackupName.?*.$suffix ]]; then
-        lvlNum=$( ls $backupPath| grep "$incBackupName\.*"| echo $(($(wc -l)+ 1)) )
+      if [[ -f "$backupPath/$incBackupName."[0-9]*".$suffix" ]]; then
+        lvlNum="$( ls $backupPath| grep "$incBackupName\.*"| echo $(($(wc -l)+ 1)) )"
 
         # Create level-n dump
-	incBackup "$tarOpts" "$backupPath/$incBackupName.$lvlNum.$suffix" "$srcDir" "$metaFile"
+	incDump "$backupPath/$incBackupName.$lvlNum.$suffix" "$srcDir" "$metaFile"
 
       else
 
         # Create level-1 dump
-	incBackup "$tarOpts" "$backupPath/$incBackupName.1.$suffix" "$srcDir" "$metaFile"
+	incDump "$backupPath/$incBackupName.1.$suffix" "$srcDir" "$metaFile"
 
       fi
     ;;
+
     *)
       error "e" "Invalid option, refer to usage"
     ;;
@@ -209,4 +246,4 @@ main(){
   exit 0
 }
 
-main
+main $@
